@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quick-trainer"
+version = "0.1.0"
+description = "Fine-tune Hugging Face models from config or CLI and publish to HF Hub and Ollama"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Quick Trainer Contributors" }]
+keywords = ["fine-tuning", "huggingface", "ollama", "lora", "ml"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "accelerate>=0.27.0",
+    "datasets>=2.18.0",
+    "huggingface-hub>=0.21.0",
+    "peft>=0.10.0",
+    "pyyaml>=6.0",
+    "torch>=2.1.0",
+    "transformers>=4.38.0",
+    "trl>=0.8.0",
+    "typer>=0.9.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.2.0",
+    "bitsandbytes>=0.42.0; platform_system != 'Darwin'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.3.0",
+]
+
+[project.scripts]
+quick-trainer = "quick_trainer.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["quick_trainer*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

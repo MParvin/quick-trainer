@@ -1,0 +1,106 @@
+name: Train and Push Model
+
+on:
+  workflow_dispatch:
+    inputs:
+      config_path:
+        description: Path to training config YAML in the repo
+        required: true
+        default: configs/ci-smoke.yaml
+        type: string
+      skip_download:
+        description: Skip explicit model pre-download
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches:
+      - main
+    paths:
+      - "configs/**"
+      - "quick_trainer/**"
+      - "pyproject.toml"
+      - ".github/workflows/train-and-push.yml"
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  train-and-push:
+    runs-on: ubuntu-latest
+    # For GPU training, use a self-hosted runner with CUDA or swap to a GPU label, e.g.:
+    # runs-on: [self-hosted, gpu]
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install PyTorch (CPU)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install Quick Trainer
+        run: pip install -e .
+
+      - name: Validate config
+        run: quick-trainer validate "${{ github.event.inputs.config_path || 'configs/ci-smoke.yaml' }}"
+
+      - name: Train and publish
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HUGGING_FACE_HUB_TOKEN: ${{ secrets.HF_TOKEN }}
+          OLLAMA_HOST: ${{ secrets.OLLAMA_HOST }}
+        run: |
+          CONFIG="${{ github.event.inputs.config_path || 'configs/ci-smoke.yaml' }}"
+          EXTRA=""
+          if [ "${{ github.event.inputs.skip_download }}" = "true" ]; then
+            EXTRA="--skip-download"
+          fi
+          quick-trainer train --config "$CONFIG" $EXTRA
+
+      - name: Upload training artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quick-trainer-output
+          path: output/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Optional GPU job template — enable when you have a self-hosted GPU runner.
+  train-and-push-gpu:
+    if: false  # set to true and configure runner labels when GPU is available
+    runs-on: [self-hosted, gpu]
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install CUDA PyTorch
+        run: pip install torch --index-url https://download.pytorch.org/whl/cu124
+
+      - name: Install Quick Trainer
+        run: pip install -e .
+
+      - name: Train and publish (GPU)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: quick-trainer train --config configs/example.yaml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quick-trainer-output-gpu
+          path: output/
