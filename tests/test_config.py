@@ -32,3 +32,12 @@ def test_config_roundtrip():
     dumped = yaml.safe_load(yaml.dump(config.model_dump(mode="json")))
     restored = QuickTrainerConfig.model_validate(dumped)
     assert restored.base_model == config.base_model
+
+
+def test_load_golang_dev_config():
+    root = Path(__file__).resolve().parents[1]
+    config = load_config(root / "configs" / "golang-dev.yaml")
+    assert config.base_model == "Qwen/Qwen3-8B"
+    assert config.datasets[0].messages_field == "messages"
+    assert config.datasets[1].dataset_config == "go"
+    assert config.datasets[1].code_field == "code"
