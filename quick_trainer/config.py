@@ -14,9 +14,17 @@ class DatasetConfig(BaseModel):
 
     path: str = Field(description="Hugging Face dataset id or local path")
     split: str = Field(default="train", description="Dataset split to use")
+    dataset_config: str | None = Field(
+        default=None,
+        description="Hugging Face dataset subset/config name (e.g. 'go' for CodeXGLUE)",
+    )
     text_field: str = Field(
         default="text",
-        description="Column containing training text (or instruction for chat)",
+        description="Column containing a single flat training string per row",
+    )
+    messages_field: str | None = Field(
+        default=None,
+        description="Column with chat messages [{role, content}, ...]; uses model chat template",
     )
     instruction_field: str | None = Field(
         default=None,
@@ -25,6 +33,14 @@ class DatasetConfig(BaseModel):
     response_field: str | None = Field(
         default=None,
         description="Optional response column paired with instruction_field",
+    )
+    code_field: str | None = Field(
+        default=None,
+        description="Code column for code/docstring pairs (use with docstring_field)",
+    )
+    docstring_field: str | None = Field(
+        default=None,
+        description="Docstring column for code/docstring pairs (use with code_field)",
     )
     max_samples: int | None = Field(
         default=None,

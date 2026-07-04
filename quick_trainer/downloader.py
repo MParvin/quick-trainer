@@ -10,6 +10,7 @@ from huggingface_hub import snapshot_download
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from quick_trainer.config import DatasetConfig, QuickTrainerConfig
+from quick_trainer.formatting import format_example
 from quick_trainer.utils import cuda_available, resolve_hf_token
 
 logger = logging.getLogger(__name__)
@@ -68,37 +69,35 @@ def load_model_for_training(config: QuickTrainerConfig):
     return model
 
 
-def _format_example(row: dict, ds_cfg: DatasetConfig) -> dict[str, str]:
-    if ds_cfg.instruction_field and ds_cfg.response_field:
-        instruction = row.get(ds_cfg.instruction_field, "")
-        response = row.get(ds_cfg.response_field, "")
-        text = f"### Instruction:\n{instruction}\n\n### Response:\n{response}"
-    else:
-        text = row.get(ds_cfg.text_field, "")
-        if not isinstance(text, str):
-            text = str(text)
-    return {"text": text}
+def _load_single_dataset(ds_cfg: DatasetConfig, token: str | None):
+    if Path(ds_cfg.path).exists():
+        return load_dataset("json", data_files=ds_cfg.path, split="train")
+    if ds_cfg.dataset_config:
+        return load_dataset(ds_cfg.path, ds_cfg.dataset_config, split=ds_cfg.split, token=token)
+    return load_dataset(ds_cfg.path, split=ds_cfg.split, token=token)
 
 
 def load_training_datasets(config: QuickTrainerConfig):
     """Load and merge all configured datasets."""
     token = resolve_hf_token(config)
+    tokenizer = load_tokenizer(config)
     parts = []
 
     for ds_cfg in config.datasets:
-        logger.info("Loading dataset: %s (split=%s)", ds_cfg.path, ds_cfg.split)
-        if Path(ds_cfg.path).exists():
-            dataset = load_dataset("json", data_files=ds_cfg.path, split="train")
-        else:
-            dataset = load_dataset(ds_cfg.path, split=ds_cfg.split, token=token)
+        label = ds_cfg.path
+        if ds_cfg.dataset_config:
+            label = f"{ds_cfg.path} ({ds_cfg.dataset_config})"
+        logger.info("Loading dataset: %s (split=%s)", label, ds_cfg.split)
+
+        dataset = _load_single_dataset(ds_cfg, token)
 
         if ds_cfg.max_samples is not None:
             dataset = dataset.select(range(min(ds_cfg.max_samples, len(dataset))))
 
         dataset = dataset.map(
-            lambda row: _format_example(row, ds_cfg),
+            lambda row: format_example(row, ds_cfg, tokenizer),
             remove_columns=dataset.column_names,
-            desc=f"Formatting {ds_cfg.path}",
+            desc=f"Formatting {label}",
         )
         parts.append(dataset)
 
