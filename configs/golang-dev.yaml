@@ -1,0 +1,54 @@
+# Fine-tune Qwen3-8B on Go coding datasets.
+# Requires a GPU with ~24GB VRAM (4-bit LoRA). Not suitable for CPU GitHub runners.
+#
+# Before running:
+#   1. Set HF_TOKEN in your environment (or GitHub secret)
+#   2. Replace huggingface.repo_id with your username/repo
+#   3. Adjust max_samples for a shorter dev run, or remove them for full training
+
+base_model: Qwen/Qwen3-8B
+
+datasets:
+  # Chat-format Go Q&A (~305k rows). Uses messages_field + the model's chat template.
+  - path: smcleod/golang-coder
+    split: train
+    messages_field: messages
+    max_samples: 10000  # remove or raise for full training
+
+  # Real-world Go functions + docstrings (~167k train rows). Go subset via dataset_config.
+  - path: google/code_x_glue_ct_code_to_text
+    dataset_config: go
+    split: train
+    code_field: code
+    docstring_field: docstring
+    max_samples: 10000  # remove or raise for full training
+
+training:
+  output_dir: ./output/qwen3-8b-golang
+  num_train_epochs: 1
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16
+  learning_rate: 2.0e-4
+  max_seq_length: 4096
+  warmup_ratio: 0.03
+  logging_steps: 10
+  save_steps: 500
+  use_lora: true
+  load_in_4bit: true
+  bf16: true
+  lora:
+    r: 32
+    lora_alpha: 64
+    lora_dropout: 0.05
+
+huggingface:
+  enabled: true
+  repo_id: your-username/qwen3-8b-golang
+  private: false
+  commit_message: "Fine-tuned Qwen3-8B on Go datasets with Quick Trainer"
+
+ollama:
+  enabled: false
+  model_name: qwen3-8b-golang
+  system_prompt: "You are an expert Go programmer. When outputting code, wrap it in a markdown code block."
+  push: false
