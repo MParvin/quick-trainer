@@ -27,7 +27,7 @@ env:
 
 jobs:
   train-and-push:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gpu]
     # For GPU training, use a self-hosted runner with CUDA or swap to a GPU label, e.g.:
     # runs-on: [self-hosted, gpu]
     permissions:
