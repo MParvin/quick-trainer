@@ -1,0 +1,61 @@
+version: "3"
+
+vars:
+  IMAGE: mparvin/quick-trainer
+  TAG: latest
+  CONFIG: configs/golang-dev.yaml
+  SKIP_DOWNLOAD: "false"
+
+tasks:
+  docker:build:
+    desc: Build the Quick Trainer Docker image
+    cmds:
+      - docker build -t {{.IMAGE}}:{{.TAG}} .
+
+  docker:push:
+    desc: Push the image to Docker Hub (run docker login first)
+    cmds:
+      - docker push {{.IMAGE}}:{{.TAG}}
+
+  docker:publish:
+    desc: Build and push the Docker image to Docker Hub
+    deps: [docker:build]
+    cmds:
+      - task: docker:push
+
+  binary:
+    desc: Build a standalone quick-trainer executable (output dist/quick-trainer)
+    cmds:
+      - ls -lhd .venv || virtualenv .venv -p python3.13.13
+      - source .venv/bin/activate
+      - python3 -m pip install -e ".[dev]"
+      - python3 -m PyInstaller --clean --noconfirm quick-trainer.spec
+      - chmod +x dist/quick-trainer
+      - dist/quick-trainer --help
+
+  train:
+    desc: "Fine-tune a model locally (usage: task train CONFIG=configs/golang-dev.yaml)"
+    cmds:
+      - |
+        EXTRA=""
+        if [ "{{.SKIP_DOWNLOAD}}" = "true" ]; then
+          EXTRA="--skip-download"
+        fi
+        docker run --rm --gpus all \
+          -v "$(pwd):/workspace" \
+          -v quick-trainer-hf-cache:/root/.cache/huggingface \
+          -w /workspace \
+          -e HF_TOKEN \
+          -e HUGGING_FACE_HUB_TOKEN \
+          -e OLLAMA_HOST \
+          {{.IMAGE}}:{{.TAG}} \
+          validate {{.CONFIG}}
+        docker run --rm --gpus all \
+          -v "$(pwd):/workspace" \
+          -v quick-trainer-hf-cache:/root/.cache/huggingface \
+          -w /workspace \
+          -e HF_TOKEN \
+          -e HUGGING_FACE_HUB_TOKEN \
+          -e OLLAMA_HOST \
+          {{.IMAGE}}:{{.TAG}} \
+          train --config {{.CONFIG}} $EXTRA

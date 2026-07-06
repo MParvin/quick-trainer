@@ -6,6 +6,8 @@ __pycache__/
 .eggs/
 dist/
 build/
+quick-trainer
+*.spec.bak
 *.egg
 .venv/
 venv/
