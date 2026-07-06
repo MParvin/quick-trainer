@@ -6,7 +6,7 @@ on:
       config_path:
         description: Path to training config YAML in the repo
         required: true
-        default: configs/ci-smoke.yaml
+        default: configs/golang-dev.yaml
         type: string
       skip_download:
         description: Skip explicit model pre-download
@@ -15,6 +15,7 @@ on:
         type: boolean
   push:
     branches:
+      - master
       - main
     paths:
       - "configs/**"
@@ -22,36 +23,39 @@ on:
       - "pyproject.toml"
       - ".github/workflows/train-and-push.yml"
 
-env:
-  PYTHON_VERSION: "3.11"
-
 jobs:
   train-and-push:
     runs-on: [self-hosted, gpu]
-    # For GPU training, use a self-hosted runner with CUDA or swap to a GPU label, e.g.:
-    # runs-on: [self-hosted, gpu]
     permissions:
       contents: read
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-
-      - name: Install PyTorch (CPU)
+      - name: Verify system Python
         run: |
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python3 --version
+          python3 -m pip --version
+          PYTHON_VERSION="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+          PYTHON_MAJOR="$(python3 -c 'import sys; print(sys.version_info.major)')"
+          PYTHON_MINOR="$(python3 -c 'import sys; print(sys.version_info.minor)')"
+          if [ "$PYTHON_MAJOR" -lt 3 ] || { [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 10 ]; }; then
+            echo "Python >= 3.10 is required (found ${PYTHON_VERSION})"
+            exit 1
+          fi
+          echo "Using system Python ${PYTHON_VERSION}"
+
+      - name: Install CUDA PyTorch
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install torch --index-url https://download.pytorch.org/whl/cu124
 
       - name: Install Quick Trainer
-        run: pip install -e .
+        run: python3 -m pip install -e .
 
       - name: Validate config
-        run: quick-trainer validate "${{ github.event.inputs.config_path || 'configs/ci-smoke.yaml' }}"
+        run: quick-trainer validate "${{ github.event.inputs.config_path || 'configs/golang-dev.yaml' }}"
 
       - name: Train and publish
         env:
@@ -59,7 +63,7 @@ jobs:
           HUGGING_FACE_HUB_TOKEN: ${{ secrets.HF_TOKEN }}
           OLLAMA_HOST: ${{ secrets.OLLAMA_HOST }}
         run: |
-          CONFIG="${{ github.event.inputs.config_path || 'configs/ci-smoke.yaml' }}"
+          CONFIG="${{ github.event.inputs.config_path || 'configs/golang-dev.yaml' }}"
           EXTRA=""
           if [ "${{ github.event.inputs.skip_download }}" = "true" ]; then
             EXTRA="--skip-download"
@@ -75,32 +79,38 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # Optional GPU job template — enable when you have a self-hosted GPU runner.
-  train-and-push-gpu:
-    if: false  # set to true and configure runner labels when GPU is available
-    runs-on: [self-hosted, gpu]
+  # Optional smoke job for GitHub-hosted runners (uses setup-python on Ubuntu).
+  train-and-push-hosted:
+    if: false
+    runs-on: ubuntu-latest
     permissions:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: "3.13"
+          cache: pip
 
-      - name: Install CUDA PyTorch
-        run: pip install torch --index-url https://download.pytorch.org/whl/cu124
+      - name: Install PyTorch (CPU)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Install Quick Trainer
         run: pip install -e .
 
-      - name: Train and publish (GPU)
+      - name: Validate config
+        run: quick-trainer validate configs/ci-smoke.yaml
+
+      - name: Train and publish
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: quick-trainer train --config configs/example.yaml
+        run: quick-trainer train --config configs/ci-smoke.yaml
 
       - uses: actions/upload-artifact@v4
         with:
-          name: quick-trainer-output-gpu
+          name: quick-trainer-output-hosted
           path: output/
+          if-no-files-found: ignore
