@@ -39,3 +39,4 @@ secrets.yaml
 *.zip
 *.bz2
 *.tar
+bearer.ignore

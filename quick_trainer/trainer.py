@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from datasets import Dataset
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from transformers import TrainingArguments
 from trl import SFTTrainer
 
-from quick_trainer.config import QuickTrainerConfig
+from quick_trainer.config import QuickTrainerConfig, TrainingConfig
 from quick_trainer.downloader import load_model_for_training, load_tokenizer, load_training_datasets
+from quick_trainer.safety import sanitize_output_dir
 from quick_trainer.utils import cuda_available
 
 logger = logging.getLogger(__name__)
@@ -54,9 +56,58 @@ def _build_lora_config(config: QuickTrainerConfig, model) -> LoraConfig:
     )
 
 
+def _common_training_kwargs(training_cfg: TrainingConfig, output_dir: Path) -> dict[str, Any]:
+    return dict(
+        output_dir=str(output_dir),
+        num_train_epochs=training_cfg.num_train_epochs,
+        per_device_train_batch_size=training_cfg.per_device_train_batch_size,
+        gradient_accumulation_steps=training_cfg.gradient_accumulation_steps,
+        learning_rate=training_cfg.learning_rate,
+        warmup_ratio=training_cfg.warmup_ratio,
+        logging_steps=training_cfg.logging_steps,
+        save_steps=training_cfg.save_steps,
+        save_total_limit=2,
+        optim="paged_adamw_8bit"
+        if (training_cfg.load_in_4bit and cuda_available())
+        else "adamw_torch",
+        bf16=training_cfg.bf16 and cuda_available(),
+        report_to="none",
+        seed=training_cfg.seed,
+        remove_unused_columns=False,
+    )
+
+
+def _build_training_args_and_sft_kwargs(
+    training_cfg: TrainingConfig,
+    output_dir: Path,
+) -> tuple[TrainingArguments, dict[str, Any]]:
+    """Build TRL training args, adapting to installed SFTConfig field names."""
+    common_kwargs = _common_training_kwargs(training_cfg, output_dir)
+
+    try:
+        from trl import SFTConfig
+
+        sft_fields = SFTConfig.__dataclass_fields__
+        config_kwargs = dict(common_kwargs)
+
+        if "dataset_text_field" in sft_fields:
+            config_kwargs["dataset_text_field"] = "text"
+        if "max_length" in sft_fields:
+            config_kwargs["max_length"] = training_cfg.max_seq_length
+        elif "max_seq_length" in sft_fields:
+            config_kwargs["max_seq_length"] = training_cfg.max_seq_length
+
+        return SFTConfig(**config_kwargs), {}
+    except ImportError:
+        return TrainingArguments(**common_kwargs), {
+            "dataset_text_field": "text",
+            "max_seq_length": training_cfg.max_seq_length,
+        }
+
+
 def fine_tune(config: QuickTrainerConfig) -> Path:
     """Run LoRA (or full) SFT training and return output directory."""
-    output_dir = Path(config.training.output_dir)
+    output_dir = sanitize_output_dir(config.training.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("Loading datasets...")
@@ -76,34 +127,18 @@ def fine_tune(config: QuickTrainerConfig) -> Path:
         model = get_peft_model(model, _build_lora_config(config, model))
         model.print_trainable_parameters()
 
-    training_args = TrainingArguments(
-        output_dir=str(output_dir),
-        num_train_epochs=training_cfg.num_train_epochs,
-        per_device_train_batch_size=training_cfg.per_device_train_batch_size,
-        gradient_accumulation_steps=training_cfg.gradient_accumulation_steps,
-        learning_rate=training_cfg.learning_rate,
-        warmup_ratio=training_cfg.warmup_ratio,
-        logging_steps=training_cfg.logging_steps,
-        save_steps=training_cfg.save_steps,
-        save_total_limit=2,
-        optim="paged_adamw_8bit" if (training_cfg.load_in_4bit and cuda_available()) else "adamw_torch",
-        bf16=training_cfg.bf16 and cuda_available(),
-        report_to="none",
-        seed=training_cfg.seed,
-        remove_unused_columns=False,
-    )
+    training_args, extra_sft_kwargs = _build_training_args_and_sft_kwargs(training_cfg, output_dir)
 
-    sft_kwargs = dict(
+    trainer_kwargs = dict(
         model=model,
         args=training_args,
         train_dataset=dataset,
-        dataset_text_field="text",
-        max_seq_length=training_cfg.max_seq_length,
+        **extra_sft_kwargs,
     )
     try:
-        trainer = SFTTrainer(processing_class=tokenizer, **sft_kwargs)
+        trainer = SFTTrainer(processing_class=tokenizer, **trainer_kwargs)
     except TypeError:
-        trainer = SFTTrainer(tokenizer=tokenizer, **sft_kwargs)
+        trainer = SFTTrainer(tokenizer=tokenizer, **trainer_kwargs)
 
     logger.info("Starting training...")
     trainer.train()

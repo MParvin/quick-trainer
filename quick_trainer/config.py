@@ -8,6 +8,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
+from quick_trainer.safety import sanitize_output_dir, validate_ollama_model_name
+
 
 class DatasetConfig(BaseModel):
     """A single training dataset source."""
@@ -57,6 +59,13 @@ class LoRAConfig(BaseModel):
 
 class TrainingConfig(BaseModel):
     output_dir: str = "./output"
+
+    @field_validator("output_dir")
+    @classmethod
+    def validate_output_dir(cls, value: str) -> str:
+        sanitize_output_dir(value)
+        return value
+
     num_train_epochs: int = 3
     per_device_train_batch_size: int = 2
     gradient_accumulation_steps: int = 4
@@ -88,6 +97,12 @@ class OllamaConfig(BaseModel):
         default="quick-trainer-model",
         description="Local Ollama model name",
     )
+
+    @field_validator("model_name")
+    @classmethod
+    def validate_model_name(cls, value: str) -> str:
+        return validate_ollama_model_name(value)
+
     base_template: str = Field(
         default="{{ .Prompt }}",
         description="Modelfile template line (Go template syntax)",

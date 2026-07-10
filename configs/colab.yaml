@@ -1,7 +1,11 @@
 # Quick Trainer configuration for Google Colab (GPU).
 # Edit huggingface.repo_id before training.
+#
+# Default model is ungated so Colab works without extra HF approvals.
+# For gated models (e.g. meta-llama/Llama-3.2-1B-Instruct), accept the license
+# on the model's Hugging Face page while logged in, then set base_model below.
 
-base_model: meta-llama/Llama-3.2-1B-Instruct
+base_model: TinyLlama/TinyLlama-1.1B-Chat-v1.0
 
 datasets:
   - path: databricks/databricks-dolly-15k

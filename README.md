@@ -41,10 +41,12 @@ Run Quick Trainer in the browser with a free or paid Colab GPU:
 
 1. Click **Open in Colab** above and set **Runtime → Change runtime type → GPU**.
 2. Add a Colab secret named `HF_TOKEN` with your [Hugging Face write token](https://huggingface.co/settings/tokens).
-3. In the notebook, set `huggingface.repo_id` to your target repo (e.g. `your-username/my-colab-model`).
+3. In the notebook **configuration cell**, set `BASE_MODEL`, `HF_REPO_ID`, `COMMIT_MESSAGE`, and other run settings.
 4. Run all cells to install, validate, train, and upload to the Hub.
 
-The notebook installs from GitHub, uses [`configs/colab.yaml`](configs/colab.yaml) defaults (4-bit LoRA, Ollama disabled), and optionally mounts Google Drive to persist outputs.
+The notebook installs from GitHub, uses [`configs/colab.yaml`](configs/colab.yaml) defaults (ungated `TinyLlama` base model, 4-bit LoRA, Ollama disabled), and optionally mounts Google Drive to persist outputs.
+
+**Gated models:** Llama and some other models require accepting a license on Hugging Face before download. The Colab defaults use an ungated model so training works immediately; change `base_model` after accepting access if needed.
 
 ## Configuration
 

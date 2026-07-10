@@ -15,9 +15,19 @@ from quick_trainer.utils import resolve_hf_token
 logger = logging.getLogger(__name__)
 
 
+def _assert_child_path(parent: Path, child: Path) -> None:
+    parent_resolved = parent.resolve()
+    child_resolved = child.resolve()
+    if not child_resolved.is_relative_to(parent_resolved):
+        raise ValueError(f"Path {child_resolved} is outside allowed directory {parent_resolved}")
+
+
 def merge_lora_adapter(model_dir: Path, config: QuickTrainerConfig) -> Path:
     """Merge LoRA weights into the base model and write to `model_dir/merged`."""
-    merged_dir = model_dir / "merged"
+    model_dir = model_dir.resolve()
+    merged_dir = (model_dir / "merged").resolve()
+    _assert_child_path(model_dir, merged_dir)
+
     if merged_dir.exists():
         shutil.rmtree(merged_dir)
     merged_dir.mkdir(parents=True)
@@ -28,6 +38,7 @@ def merge_lora_adapter(model_dir: Path, config: QuickTrainerConfig) -> Path:
             if item.name == "merged":
                 continue
             dest = merged_dir / item.name
+            _assert_child_path(merged_dir, dest)
             if item.is_dir():
                 shutil.copytree(item, dest)
             else:
