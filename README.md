@@ -33,6 +33,19 @@ quick-trainer train \
   --no-ollama
 ```
 
+## Google Colab
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/MParvin/quick-trainer/blob/master/notebooks/quick_trainer_colab.ipynb)
+
+Run Quick Trainer in the browser with a free or paid Colab GPU:
+
+1. Click **Open in Colab** above and set **Runtime → Change runtime type → GPU**.
+2. Add a Colab secret named `HF_TOKEN` with your [Hugging Face write token](https://huggingface.co/settings/tokens).
+3. In the notebook, set `huggingface.repo_id` to your target repo (e.g. `your-username/my-colab-model`).
+4. Run all cells to install, validate, train, and upload to the Hub.
+
+The notebook installs from GitHub, uses [`configs/colab.yaml`](configs/colab.yaml) defaults (4-bit LoRA, Ollama disabled), and optionally mounts Google Drive to persist outputs.
+
 ## Configuration
 
 Copy `configs/example.yaml` and edit:
@@ -154,7 +167,11 @@ quick-trainer/
 │   ├── uploader.py     # Hugging Face Hub upload
 │   ├── ollama.py       # Ollama Modelfile + create/push
 │   └── pipeline.py     # End-to-end orchestration
-├── configs/example.yaml
+├── configs/
+│   ├── example.yaml
+│   └── colab.yaml
+├── notebooks/
+│   └── quick_trainer_colab.ipynb
 └── .github/workflows/train-and-push.yml
 ```
 

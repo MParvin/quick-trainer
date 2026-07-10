@@ -32,3 +32,10 @@ Thumbs.db
 # Local config overrides
 config.local.yaml
 secrets.yaml
+
+# Archvies and Zips
+*.gz
+*.xz
+*.zip
+*.bz2
+*.tar
