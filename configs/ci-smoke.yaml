@@ -31,3 +31,8 @@ huggingface:
 
 ollama:
   enabled: false
+
+evaluation:
+  enabled: false
+
+trust_remote_code: false

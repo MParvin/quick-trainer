@@ -8,7 +8,12 @@ import subprocess
 from pathlib import Path
 
 from quick_trainer.config import OllamaConfig, QuickTrainerConfig
-from quick_trainer.safety import OLLAMA_MODEL_NAME_RE, validate_ollama_model_name
+from quick_trainer.safety import (
+    OLLAMA_MODEL_NAME_RE,
+    sanitize_gguf_path,
+    sanitize_modelfile_text,
+    validate_ollama_model_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,19 +46,27 @@ def _ensure_ollama() -> str:
     return path
 
 
-def _write_modelfile(model_dir: Path, cfg: OllamaConfig) -> Path:
+def _write_modelfile(
+    model_dir: Path,
+    cfg: OllamaConfig,
+    *,
+    allow_root: Path | None = None,
+) -> Path:
     modelfile = model_dir / "Modelfile"
     lines: list[str] = []
 
     if cfg.gguf_path:
-        lines.append(f'FROM "{Path(cfg.gguf_path).resolve()}"')
+        gguf = sanitize_gguf_path(cfg.gguf_path, allow_root=allow_root)
+        lines.append(f'FROM "{gguf}"')
     else:
         lines.append(f'FROM "{model_dir.resolve()}"')
 
     if cfg.system_prompt:
-        lines.append(f'SYSTEM """{cfg.system_prompt}"""')
+        system_prompt = sanitize_modelfile_text(cfg.system_prompt, field_name="system_prompt")
+        lines.append(f'SYSTEM """{system_prompt}"""')
 
-    lines.append(f'TEMPLATE """{cfg.base_template}"""')
+    template = sanitize_modelfile_text(cfg.base_template, field_name="base_template")
+    lines.append(f'TEMPLATE """{template}"""')
     lines.append('PARAMETER stop "### Instruction:"')
     lines.append('PARAMETER stop "### Response:"')
 
@@ -75,7 +88,8 @@ def publish_to_ollama(
 
     ollama_bin = _ensure_ollama()
     model_name = validate_ollama_model_name(ollama_cfg.model_name)
-    _write_modelfile(model_dir, ollama_cfg)
+    allow_root = Path.cwd()
+    _write_modelfile(model_dir, ollama_cfg, allow_root=allow_root)
 
     logger.info("Creating Ollama model: %s", model_name)
     _run_ollama(ollama_bin, "create", model_name, "-f", str(model_dir / "Modelfile"))

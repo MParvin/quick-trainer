@@ -41,13 +41,15 @@ def format_messages(
     return flatten_messages(messages)
 
 
-def format_code_docstring(code: str, docstring: str) -> str:
+def format_code_docstring(code: str, docstring: str, *, language: str = "code") -> str:
+    lang = language.strip() or "code"
     return (
         "### Instruction:\n"
-        "You are an expert Go programmer. Write a Go function that matches this description.\n\n"
+        f"You are an expert {lang} programmer. Write a {lang} function that matches "
+        "this description.\n\n"
         f"{docstring}\n\n"
         "### Response:\n"
-        f"```go\n{code}\n```"
+        f"```{lang}\n{code}\n```"
     )
 
 
@@ -64,7 +66,11 @@ def format_example(
     elif ds_cfg.code_field and ds_cfg.docstring_field:
         code = row.get(ds_cfg.code_field, "")
         docstring = row.get(ds_cfg.docstring_field, "")
-        text = format_code_docstring(str(code), str(docstring))
+        text = format_code_docstring(
+            str(code),
+            str(docstring),
+            language=ds_cfg.code_language,
+        )
     elif ds_cfg.instruction_field and ds_cfg.response_field:
         instruction = row.get(ds_cfg.instruction_field, "")
         response = row.get(ds_cfg.response_field, "")

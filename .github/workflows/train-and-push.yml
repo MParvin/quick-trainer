@@ -4,74 +4,140 @@ on:
   workflow_dispatch:
     inputs:
       config_path:
-        description: Path to training config YAML in the repo
+        description: Path to training config YAML under configs/
         required: true
-        default: configs/golang-dev.yaml
+        default: configs/ci-smoke.yaml
         type: string
       skip_download:
         description: Skip explicit model pre-download
         required: false
         default: false
         type: boolean
-  push:
-    branches:
-      - master
-      - main
-    paths:
-      - "configs/**"
-      - "quick_trainer/**"
-      - "pyproject.toml"
-      - "Dockerfile"
-      - ".github/workflows/train-and-push.yml"
+      push_image:
+        description: Push built image to Docker Hub (requires registry credentials on runner)
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: train-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
-  IMAGE: mparvin/quick-trainer:latest
+  IMAGE_NAME: mparvin/quick-trainer
 
 jobs:
   train-and-push:
     runs-on: [self-hosted, gpu]
     permissions:
       contents: read
+    environment: model-publish
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Validate config
+      - name: Resolve and validate inputs
+        id: inputs
+        env:
+          RAW_CONFIG_PATH: ${{ github.event.inputs.config_path }}
+          RAW_SKIP_DOWNLOAD: ${{ github.event.inputs.skip_download }}
         run: |
+          set -euo pipefail
+          CONFIG_PATH="${RAW_CONFIG_PATH:-configs/ci-smoke.yaml}"
+          case "$CONFIG_PATH" in
+            configs/[A-Za-z0-9]*)
+              ;;
+            *)
+              echo "Invalid config_path: must start with configs/" >&2
+              exit 1
+              ;;
+          esac
+          if [[ ! "$CONFIG_PATH" =~ ^configs/[A-Za-z0-9][A-Za-z0-9._/-]*\.ya?ml$ ]]; then
+            echo "Invalid config_path format: $CONFIG_PATH" >&2
+            exit 1
+          fi
+          if [[ ! -f "$CONFIG_PATH" ]]; then
+            echo "Config file not found: $CONFIG_PATH" >&2
+            exit 1
+          fi
+          SKIP_DOWNLOAD=false
+          if [[ "${RAW_SKIP_DOWNLOAD:-false}" == "true" ]]; then
+            SKIP_DOWNLOAD=true
+          fi
+          IMAGE_TAG="${IMAGE_NAME}:${GITHUB_SHA}"
+          echo "config_path=$CONFIG_PATH" >> "$GITHUB_OUTPUT"
+          echo "skip_download=$SKIP_DOWNLOAD" >> "$GITHUB_OUTPUT"
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build image from commit
+        env:
+          IMAGE_TAG: ${{ steps.inputs.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          docker build -t "$IMAGE_TAG" -t "${IMAGE_NAME}:latest" .
+
+      - name: Validate config
+        env:
+          CONFIG_PATH: ${{ steps.inputs.outputs.config_path }}
+          IMAGE_TAG: ${{ steps.inputs.outputs.image_tag }}
+        run: |
+          set -euo pipefail
           docker run --rm --gpus all \
-            -v "${{ github.workspace }}:/workspace" \
-            -v quick-trainer-hf-cache:/root/.cache/huggingface \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -v quick-trainer-hf-cache:/workspace/.cache/huggingface \
             -w /workspace \
-            ${{ env.IMAGE }} \
-            validate "${{ github.event.inputs.config_path || 'configs/golang-dev.yaml' }}"
+            -e HF_HOME=/workspace/.cache/huggingface \
+            -e HOME=/workspace \
+            -u "$(id -u):$(id -g)" \
+            "$IMAGE_TAG" \
+            validate --require-repo-path "$CONFIG_PATH"
 
       - name: Train and publish
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HUGGING_FACE_HUB_TOKEN: ${{ secrets.HF_TOKEN }}
           OLLAMA_HOST: ${{ secrets.OLLAMA_HOST }}
+          CONFIG_PATH: ${{ steps.inputs.outputs.config_path }}
+          SKIP_DOWNLOAD: ${{ steps.inputs.outputs.skip_download }}
+          IMAGE_TAG: ${{ steps.inputs.outputs.image_tag }}
         run: |
-          CONFIG="${{ github.event.inputs.config_path || 'configs/golang-dev.yaml' }}"
-          EXTRA=""
-          if [ "${{ github.event.inputs.skip_download }}" = "true" ]; then
-            EXTRA="--skip-download"
+          set -euo pipefail
+          EXTRA=()
+          if [[ "$SKIP_DOWNLOAD" == "true" ]]; then
+            EXTRA+=(--skip-download)
           fi
           docker run --rm --gpus all \
-            -v "${{ github.workspace }}:/workspace" \
-            -v quick-trainer-hf-cache:/root/.cache/huggingface \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -v quick-trainer-hf-cache:/workspace/.cache/huggingface \
             -w /workspace \
+            -e HF_HOME=/workspace/.cache/huggingface \
+            -e HOME=/workspace \
+            -u "$(id -u):$(id -g)" \
             -e HF_TOKEN \
             -e HUGGING_FACE_HUB_TOKEN \
             -e OLLAMA_HOST \
-            ${{ env.IMAGE }} \
-            train --config "$CONFIG" $EXTRA
+            "$IMAGE_TAG" \
+            train --config "$CONFIG_PATH" "${EXTRA[@]}"
 
       - name: Upload training artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quick-trainer-output
-          path: output/
+          name: quick-trainer-output-${{ github.sha }}
+          path: |
+            output/
+            !output/**/*.pt
+            !output/**/*.bin
+            !output/**/*.safetensors
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 7
+
+      - name: Push image (optional)
+        if: ${{ github.event.inputs.push_image == 'true' }}
+        env:
+          IMAGE_TAG: ${{ steps.inputs.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          docker push "$IMAGE_TAG"
+          docker push "${IMAGE_NAME}:latest"

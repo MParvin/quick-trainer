@@ -3,7 +3,7 @@ version: "3"
 vars:
   IMAGE: mparvin/quick-trainer
   TAG: latest
-  CONFIG: configs/golang-dev.yaml
+  CONFIG: configs/ci-smoke.yaml
   SKIP_DOWNLOAD: "false"
   SERVER: devmad
   DEP_PATH: /opt/src/quick-trainer
@@ -32,7 +32,7 @@ tasks:
         if [ ! -x .venv/bin/python3 ]; then
           python3 -m venv .venv
         fi
-        .venv/bin/python3 -m pip install -e ".[dev]"
+        .venv/bin/python3 -m pip install -e ".[dev,cpu]"
         .venv/bin/python3 -m PyInstaller --clean --noconfirm quick-trainer.spec
         chmod +x dist/quick-trainer
         dist/quick-trainer --help
@@ -41,28 +41,34 @@ tasks:
     desc: "Fine-tune a model locally (usage: task train CONFIG=configs/golang-dev.yaml)"
     cmds:
       - |
-        EXTRA=""
+        EXTRA=()
         if [ "{{.SKIP_DOWNLOAD}}" = "true" ]; then
-          EXTRA="--skip-download"
+          EXTRA+=(--skip-download)
         fi
         docker run --rm --gpus all \
           -v "$(pwd):/workspace" \
-          -v quick-trainer-hf-cache:/root/.cache/huggingface \
+          -v quick-trainer-hf-cache:/workspace/.cache/huggingface \
           -w /workspace \
+          -u "$(id -u):$(id -g)" \
           -e HF_TOKEN \
           -e HUGGING_FACE_HUB_TOKEN \
           -e OLLAMA_HOST \
+          -e HOME=/workspace \
+          -e HF_HOME=/workspace/.cache/huggingface \
           {{.IMAGE}}:{{.TAG}} \
-          validate {{.CONFIG}}
+          validate --require-repo-path {{.CONFIG}}
         docker run --rm --gpus all \
           -v "$(pwd):/workspace" \
-          -v quick-trainer-hf-cache:/root/.cache/huggingface \
+          -v quick-trainer-hf-cache:/workspace/.cache/huggingface \
           -w /workspace \
+          -u "$(id -u):$(id -g)" \
           -e HF_TOKEN \
           -e HUGGING_FACE_HUB_TOKEN \
           -e OLLAMA_HOST \
+          -e HOME=/workspace \
+          -e HF_HOME=/workspace/.cache/huggingface \
           {{.IMAGE}}:{{.TAG}} \
-          train --config {{.CONFIG}} $EXTRA
+          train --config {{.CONFIG}} "${EXTRA[@]}"
 
   remote:build:
     desc: Build the Docker image on a remote server

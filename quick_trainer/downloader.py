@@ -31,11 +31,11 @@ def download_base_model(config: QuickTrainerConfig, cache_dir: Path | None = Non
 
 def load_tokenizer(config: QuickTrainerConfig):
     token = resolve_hf_token(config)
-    return AutoTokenizer.from_pretrained(config.base_model, token=token, trust_remote_code=True)
-
-
-def _cuda_available() -> bool:
-    return cuda_available()
+    return AutoTokenizer.from_pretrained(
+        config.base_model,
+        token=token,
+        trust_remote_code=config.trust_remote_code,
+    )
 
 
 def load_model_for_training(config: QuickTrainerConfig):
@@ -45,14 +45,14 @@ def load_model_for_training(config: QuickTrainerConfig):
 
     token = resolve_hf_token(config)
     training = config.training
-    use_4bit = training.use_lora and training.load_in_4bit and _cuda_available()
+    use_4bit = training.use_lora and training.load_in_4bit and cuda_available()
     if training.load_in_4bit and not use_4bit:
         logger.warning("4-bit loading requires CUDA; falling back to full precision.")
 
     model_kwargs: dict = {
         "token": token,
-        "trust_remote_code": True,
-        "device_map": "auto" if _cuda_available() else None,
+        "trust_remote_code": config.trust_remote_code,
+        "device_map": "auto" if cuda_available() else None,
     }
 
     if use_4bit:
@@ -62,7 +62,7 @@ def load_model_for_training(config: QuickTrainerConfig):
             bnb_4bit_compute_dtype=torch.bfloat16 if training.bf16 else torch.float16,
             bnb_4bit_use_double_quant=True,
         )
-    elif training.bf16 and _cuda_available():
+    elif training.bf16 and cuda_available():
         model_kwargs["torch_dtype"] = torch.bfloat16
 
     model = AutoModelForCausalLM.from_pretrained(config.base_model, **model_kwargs)
@@ -77,10 +77,11 @@ def _load_single_dataset(ds_cfg: DatasetConfig, token: str | None):
     return load_dataset(ds_cfg.path, split=ds_cfg.split, token=token)
 
 
-def load_training_datasets(config: QuickTrainerConfig):
+def load_training_datasets(config: QuickTrainerConfig, tokenizer=None):
     """Load and merge all configured datasets."""
     token = resolve_hf_token(config)
-    tokenizer = load_tokenizer(config)
+    if tokenizer is None:
+        tokenizer = load_tokenizer(config)
     parts = []
 
     for ds_cfg in config.datasets:
@@ -95,7 +96,7 @@ def load_training_datasets(config: QuickTrainerConfig):
             dataset = dataset.select(range(min(ds_cfg.max_samples, len(dataset))))
 
         dataset = dataset.map(
-            lambda row: format_example(row, ds_cfg, tokenizer),
+            lambda row, cfg=ds_cfg: format_example(row, cfg, tokenizer),
             remove_columns=dataset.column_names,
             desc=f"Formatting {label}",
         )

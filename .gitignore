@@ -15,6 +15,7 @@ venv/
 
 # Training artifacts
 output/
+.cache/
 checkpoints/
 *.pt
 *.bin
