@@ -7,7 +7,6 @@ hiddenimports = collect_submodules("quick_trainer") + [
     "typer",
     "click",
     "pydantic",
-    "pydantic_settings",
     "yaml",
 ]
 

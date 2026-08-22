@@ -21,6 +21,7 @@ datasets:
     split: train
     code_field: code
     docstring_field: docstring
+    code_language: go
     max_samples: 10000  # remove or raise for full training
 
 training:

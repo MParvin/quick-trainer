@@ -7,17 +7,19 @@ Fine-tune Hugging Face language models from a YAML config or CLI flags, then pub
 - **Config-driven or CLI** — YAML file, command-line overrides, or both
 - **Multiple datasets** — Hugging Face Hub ids or local JSON/JSONL files
 - **Efficient training** — LoRA + optional 4-bit quantization via PEFT and TRL
-- **Publish** — Upload merged weights to Hugging Face; create (and optionally push) an Ollama model
-- **CI/CD** — GitHub Actions workflow to train and push from GitHub runners
+- **Publish** — Upload merged weights or adapters to Hugging Face; create (and optionally push) an Ollama model
+- **Safety defaults** — `trust_remote_code` off by default; Modelfile/path allowlists; token redaction in `validate`
+- **CI/CD** — PR quality gates (`pytest`/`ruff`) and a manual GPU train workflow that builds from the git SHA
 
 ## Quick start
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e ".[dev,cpu]"          # CPU / local tools
+# pip install -e ".[dev,cuda]"       # add bitsandbytes on Linux/Windows CUDA hosts
 
-# Validate example config
+# Validate example config (secrets redacted in output)
 quick-trainer validate configs/example.yaml
 
 # Train from config
@@ -37,16 +39,12 @@ quick-trainer train \
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/MParvin/quick-trainer/blob/master/notebooks/quick_trainer_colab.ipynb)
 
-Run Quick Trainer in the browser with a free or paid Colab GPU:
-
-1. Click **Open in Colab** above and set **Runtime → Change runtime type → GPU**.
+1. Click **Open in Colab** and set **Runtime → Change runtime type → GPU**.
 2. Add a Colab secret named `HF_TOKEN` with your [Hugging Face write token](https://huggingface.co/settings/tokens).
-3. In the notebook **configuration cell**, set `BASE_MODEL`, `HF_REPO_ID`, `COMMIT_MESSAGE`, and other run settings.
+3. In the notebook configuration cell, set `BASE_MODEL`, `HF_REPO_ID`, `COMMIT_MESSAGE`, and `QUICK_TRAINER_REF` (prefer a commit SHA).
 4. Run all cells to install, validate, train, and upload to the Hub.
 
-The notebook installs from GitHub, uses [`configs/colab.yaml`](configs/colab.yaml) defaults (ungated `TinyLlama` base model, 4-bit LoRA, Ollama disabled), and optionally mounts Google Drive to persist outputs.
-
-**Gated models:** Llama and some other models require accepting a license on Hugging Face before download. The Colab defaults use an ungated model so training works immediately; change `base_model` after accepting access if needed.
+Defaults use ungated `TinyLlama`, 4-bit LoRA, and Ollama disabled. Gated models require accepting the Hub license first.
 
 ## Configuration
 
@@ -56,9 +54,11 @@ Copy `configs/example.yaml` and edit:
 |---------|---------|
 | `base_model` | Hugging Face model id or local path |
 | `datasets` | One or more dataset sources |
-| `training` | Epochs, batch size, LoRA, output dir |
-| `huggingface` | Upload target repo and visibility |
+| `training` | Epochs, batch size, LoRA, output dir, `merge_adapter` |
+| `huggingface` | Upload target repo, visibility, `upload_adapter_only` |
 | `ollama` | Local Ollama model name and optional push |
+| `evaluation` | Optional post-train smoke generation |
+| `trust_remote_code` | Opt-in Hub remote code execution (default `false`) |
 
 ### Dataset formats
 
@@ -78,6 +78,17 @@ datasets:
 datasets:
   - path: ./data/examples.jsonl
     text_field: text
+```
+
+**Code + docstring** — set `code_field`, `docstring_field`, and optional `code_language`:
+
+```yaml
+datasets:
+  - path: google/code_x_glue_ct_code_to_text
+    dataset_config: go
+    code_field: code
+    docstring_field: docstring
+    code_language: go
 ```
 
 **Multiple datasets** — list several entries; samples are concatenated.
@@ -101,60 +112,64 @@ quick-trainer train [OPTIONS]
   --ollama-model TEXT        Ollama model name
   --ollama-push              Push to Ollama registry
   --no-ollama                Skip Ollama
-  --hf-token TEXT            HF token (prefer HF_TOKEN env)
+  --trust-remote-code        Allow Hub remote code (unsafe)
   --skip-download            Skip pre-download step
+
+quick-trainer validate CONFIG [--require-repo-path]
 ```
+
+Prefer `HF_TOKEN` in the environment. Do not commit tokens in YAML.
 
 CLI flags override values from the config file when both are provided.
 
 ## Hugging Face upload
 
 1. Create a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) with **write** access.
-2. Set `HF_TOKEN` in your environment or GitHub repository secrets.
+2. Set `HF_TOKEN` in your environment or GitHub repository / `model-publish` environment secrets.
 3. Set `huggingface.repo_id` in config (e.g. `username/my-model`).
 
-The pipeline merges LoRA adapters into full weights before upload.
+By default the pipeline merges LoRA adapters into full weights before upload. Set
+`huggingface.upload_adapter_only: true` or `training.merge_adapter: false` to publish adapters/checkpoints instead.
 
 ## Ollama publish
-
-Enable in config:
 
 ```yaml
 ollama:
   enabled: true
   model_name: my-finetuned-model
   system_prompt: "You are a helpful assistant."
-  push: false   # set true to run `ollama push`
+  push: false
+  # gguf_path: ./models/my-model.gguf   # optional; must stay under the workspace
 ```
+
+GGUF conversion is **not** performed by Quick Trainer. Convert merged weights with
+[llama.cpp](https://github.com/ggerganov/llama.cpp) (or similar), then set `gguf_path`.
 
 Requirements:
 
 - [Ollama](https://ollama.com) installed and on `PATH`
-- For best results, provide a GGUF file via `ollama.gguf_path` (convert merged weights with [llama.cpp](https://github.com/ggerganov/llama.cpp))
 
 ## GitHub Actions
 
-Workflow: `.github/workflows/train-and-push.yml`
+### Quality gate — `.github/workflows/ci.yml`
 
-### Secrets
+Runs on pull requests and pushes to `main`/`master`:
 
-| Secret | Required | Description |
-|--------|----------|-------------|
+- `ruff check`
+- `pytest`
+
+### Train — `.github/workflows/train-and-push.yml`
+
+Manual only (`workflow_dispatch`). Builds `mparvin/quick-trainer:<git-sha>` from the checkout, validates a path under `configs/`, then trains on a self-hosted GPU runner.
+
+| Secret / env | Required | Description |
+|--------------|----------|-------------|
 | `HF_TOKEN` | Yes (for upload) | Hugging Face write token |
 | `OLLAMA_HOST` | No | Remote Ollama host if applicable |
 
-### Manual run
+Create a GitHub Environment named **`model-publish`** (optional reviewers recommended). See [`docs/runbook-runner.md`](docs/runbook-runner.md).
 
-1. Go to **Actions → Train and Push Model → Run workflow**
-2. Choose the config path (default: `configs/example.yaml`)
-
-### GPU runners
-
-Training on `ubuntu-latest` uses CPU PyTorch and suits smoke tests only. For real fine-tuning:
-
-1. Add a self-hosted runner with a GPU
-2. Set `runs-on: [self-hosted, gpu]` in the workflow
-3. Enable the `train-and-push-gpu` job template
+Default dispatch config: `configs/ci-smoke.yaml`. Use `configs/golang-dev.yaml` only for intentional full runs.
 
 ## Project layout
 
@@ -168,22 +183,40 @@ quick-trainer/
 │   ├── export.py       # Merge adapters for export
 │   ├── uploader.py     # Hugging Face Hub upload
 │   ├── ollama.py       # Ollama Modelfile + create/push
+│   ├── evaluate.py     # Optional smoke generation
+│   ├── formatting.py   # Dataset row formatting
+│   ├── safety.py       # Path / Modelfile validation
+│   ├── utils.py        # Token + CUDA helpers
 │   └── pipeline.py     # End-to-end orchestration
 ├── configs/
 │   ├── example.yaml
-│   └── colab.yaml
+│   ├── colab.yaml
+│   ├── ci-smoke.yaml
+│   └── golang-dev.yaml
 ├── notebooks/
 │   └── quick_trainer_colab.ipynb
-└── .github/workflows/train-and-push.yml
+├── docs/
+│   └── runbook-runner.md
+└── .github/workflows/
+    ├── ci.yml
+    └── train-and-push.yml
 ```
 
 ## Development
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev,cpu]"
 pytest
-ruff check quick_trainer
+ruff check quick_trainer tests
 ```
+
+## Security
+
+See [`SECURITY.md`](SECURITY.md). Highlights:
+
+- `trust_remote_code` defaults to `false`
+- `validate` redacts `hf_token`
+- CI config paths are allowlisted under `configs/`
 
 ## License
 

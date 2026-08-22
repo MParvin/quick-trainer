@@ -1,7 +1,12 @@
 """Tests for dataset formatting helpers."""
 
 from quick_trainer.config import DatasetConfig
-from quick_trainer.formatting import flatten_messages, format_example, format_messages
+from quick_trainer.formatting import (
+    flatten_messages,
+    format_code_docstring,
+    format_example,
+    format_messages,
+)
 
 
 class _FakeTokenizer:
@@ -43,8 +48,16 @@ def test_format_example_code_docstring_fields():
         dataset_config="go",
         code_field="code",
         docstring_field="docstring",
+        code_language="go",
     )
     result = format_example(row, cfg)
     assert "Add returns the sum." in result["text"]
     assert "func Add(a, b int)" in result["text"]
     assert "```go" in result["text"]
+    assert "expert go programmer" in result["text"]
+
+
+def test_format_code_docstring_language_generic():
+    text = format_code_docstring("def add(a, b): return a + b", "Add numbers.", language="python")
+    assert "expert python programmer" in text
+    assert "```python" in text

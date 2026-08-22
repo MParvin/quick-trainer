@@ -32,8 +32,8 @@ def merge_lora_adapter(model_dir: Path, config: QuickTrainerConfig) -> Path:
         shutil.rmtree(merged_dir)
     merged_dir.mkdir(parents=True)
 
-    if not config.training.use_lora:
-        logger.info("LoRA disabled; copying training output for export.")
+    if not config.training.use_lora or not config.training.merge_adapter:
+        logger.info("Skipping LoRA merge; copying training output for export.")
         for item in model_dir.iterdir():
             if item.name == "merged":
                 continue
@@ -51,7 +51,7 @@ def merge_lora_adapter(model_dir: Path, config: QuickTrainerConfig) -> Path:
     base = AutoModelForCausalLM.from_pretrained(
         config.base_model,
         token=token,
-        trust_remote_code=True,
+        trust_remote_code=config.trust_remote_code,
         torch_dtype="auto",
         device_map="cpu",
     )
@@ -59,7 +59,10 @@ def merge_lora_adapter(model_dir: Path, config: QuickTrainerConfig) -> Path:
     merged = model.merge_and_unload()
 
     merged.save_pretrained(str(merged_dir))
-    tokenizer = AutoTokenizer.from_pretrained(str(model_dir), trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        str(model_dir),
+        trust_remote_code=config.trust_remote_code,
+    )
     tokenizer.save_pretrained(str(merged_dir))
 
     logger.info("Merged model saved to %s", merged_dir)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 import yaml
@@ -16,9 +16,10 @@ from quick_trainer.config import (
     OllamaConfig,
     QuickTrainerConfig,
     TrainingConfig,
+    config_for_display,
     load_config,
 )
-from quick_trainer.pipeline import run_pipeline
+from quick_trainer.safety import validate_config_path
 
 app = typer.Typer(
     name="quick-trainer",
@@ -61,6 +62,7 @@ def _build_config_from_args(
     ollama_push: bool,
     no_ollama: bool,
     hf_token: str | None,
+    trust_remote_code: bool | None,
 ) -> QuickTrainerConfig:
     if config_path:
         config = load_config(config_path)
@@ -81,6 +83,8 @@ def _build_config_from_args(
         updates["datasets"] = _parse_dataset_specs(datasets)
     if hf_token:
         updates["hf_token"] = hf_token
+    if trust_remote_code is not None:
+        updates["trust_remote_code"] = trust_remote_code
 
     training_updates: dict = {}
     if output_dir:
@@ -132,33 +136,33 @@ def _build_config_from_args(
 @app.command("train")
 def train(
     config: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--config", "-c", help="Path to YAML config file"),
     ] = None,
     base_model: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--base-model", "-m", help="Hugging Face base model id"),
     ] = None,
     dataset: Annotated[
-        Optional[list[str]],
+        list[str] | None,
         typer.Option("--dataset", "-d", help="Dataset id or local path (repeatable)"),
     ] = None,
     output_dir: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--output-dir", "-o", help="Training output directory"),
     ] = None,
-    epochs: Annotated[Optional[int], typer.Option("--epochs", help="Training epochs")] = None,
+    epochs: Annotated[int | None, typer.Option("--epochs", help="Training epochs")] = None,
     batch_size: Annotated[
-        Optional[int], typer.Option("--batch-size", help="Per-device batch size")
+        int | None, typer.Option("--batch-size", help="Per-device batch size")
     ] = None,
     learning_rate: Annotated[
-        Optional[float], typer.Option("--learning-rate", help="Learning rate")
+        float | None, typer.Option("--learning-rate", help="Learning rate")
     ] = None,
     max_seq_length: Annotated[
-        Optional[int], typer.Option("--max-seq-length", help="Max sequence length")
+        int | None, typer.Option("--max-seq-length", help="Max sequence length")
     ] = None,
     hf_repo: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--hf-repo", help="Hugging Face target repo id"),
     ] = None,
     hf_private: Annotated[
@@ -168,7 +172,7 @@ def train(
         bool, typer.Option("--no-hf-upload", help="Skip Hugging Face upload")
     ] = False,
     ollama_model: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--ollama-model", help="Ollama model name to create"),
     ] = None,
     ollama_push: Annotated[
@@ -176,8 +180,19 @@ def train(
     ] = False,
     no_ollama: Annotated[bool, typer.Option("--no-ollama", help="Skip Ollama publish")] = False,
     hf_token: Annotated[
-        Optional[str],
-        typer.Option("--hf-token", help="Hugging Face token (prefer HF_TOKEN env)"),
+        str | None,
+        typer.Option(
+            "--hf-token",
+            help="Deprecated: prefer HF_TOKEN env var (token may appear in process lists)",
+            hidden=True,
+        ),
+    ] = None,
+    trust_remote_code: Annotated[
+        bool | None,
+        typer.Option(
+            "--trust-remote-code/--no-trust-remote-code",
+            help="Allow executing Hub model code (unsafe; default from config / false)",
+        ),
     ] = None,
     skip_download: Annotated[
         bool,
@@ -188,6 +203,13 @@ def train(
     ] = False,
 ) -> None:
     """Run the full fine-tuning pipeline."""
+    if hf_token:
+        typer.secho(
+            "Warning: --hf-token is deprecated and insecure; use the HF_TOKEN env var.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+
     cfg = _build_config_from_args(
         config_path=config,
         base_model=base_model,
@@ -204,7 +226,10 @@ def train(
         ollama_push=ollama_push,
         no_ollama=no_ollama,
         hf_token=hf_token,
+        trust_remote_code=trust_remote_code,
     )
+
+    from quick_trainer.pipeline import run_pipeline
 
     typer.echo(f"Base model: {cfg.base_model}")
     typer.echo(f"Datasets: {[d.path for d in cfg.datasets]}")
@@ -215,11 +240,20 @@ def train(
 @app.command("validate")
 def validate_config(
     config: Annotated[Path, typer.Argument(help="Path to YAML config file")],
+    require_repo_path: Annotated[
+        bool,
+        typer.Option(
+            "--require-repo-path",
+            help="Require path to match configs/*.yaml (CI safety)",
+        ),
+    ] = False,
 ) -> None:
     """Validate a config file without running training."""
+    if require_repo_path:
+        validate_config_path(config.as_posix())
     cfg = load_config(config)
     typer.echo("Config is valid.")
-    typer.echo(yaml.dump(cfg.model_dump(mode="json"), default_flow_style=False, sort_keys=False))
+    typer.echo(yaml.dump(config_for_display(cfg), default_flow_style=False, sort_keys=False))
 
 
 if __name__ == "__main__":

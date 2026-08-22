@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
-from quick_trainer.safety import sanitize_output_dir, validate_ollama_model_name
+from quick_trainer.safety import (
+    sanitize_gguf_path,
+    sanitize_modelfile_text,
+    sanitize_output_dir,
+    validate_ollama_model_name,
+)
 
 
 class DatasetConfig(BaseModel):
@@ -43,6 +48,10 @@ class DatasetConfig(BaseModel):
     docstring_field: str | None = Field(
         default=None,
         description="Docstring column for code/docstring pairs (use with code_field)",
+    )
+    code_language: str = Field(
+        default="code",
+        description="Language label used in code/docstring formatting (e.g. go, python)",
     )
     max_samples: int | None = Field(
         default=None,
@@ -79,6 +88,10 @@ class TrainingConfig(BaseModel):
     load_in_4bit: bool = True
     bf16: bool = True
     seed: int = 42
+    merge_adapter: bool = Field(
+        default=True,
+        description="Merge LoRA adapters into full weights before publish",
+    )
 
 
 class HuggingFaceUploadConfig(BaseModel):
@@ -89,6 +102,10 @@ class HuggingFaceUploadConfig(BaseModel):
     )
     private: bool = False
     commit_message: str = "Upload fine-tuned model via Quick Trainer"
+    upload_adapter_only: bool = Field(
+        default=False,
+        description="Upload adapter/checkpoint directory instead of merged full weights",
+    )
 
 
 class OllamaConfig(BaseModel):
@@ -115,11 +132,44 @@ class OllamaConfig(BaseModel):
         default=False,
         description="Run `ollama push` after create (requires Ollama account)",
     )
-    quantize: Literal["q4_K_M", "q5_K_M", "q8_0", "f16"] = "q4_K_M"
     gguf_path: str | None = Field(
         default=None,
-        description="Optional pre-built GGUF path; if omitted, uses merged HF weights",
+        description=(
+            "Optional pre-built GGUF path under the workspace; convert merged weights "
+            "externally (e.g. llama.cpp) before setting this"
+        ),
     )
+
+    @field_validator("system_prompt")
+    @classmethod
+    def validate_system_prompt(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return sanitize_modelfile_text(value, field_name="system_prompt")
+
+    @field_validator("base_template")
+    @classmethod
+    def validate_base_template(cls, value: str) -> str:
+        return sanitize_modelfile_text(value, field_name="base_template")
+
+    @field_validator("gguf_path")
+    @classmethod
+    def validate_gguf_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        sanitize_gguf_path(value)
+        return value
+
+
+class EvaluationConfig(BaseModel):
+    """Optional post-train smoke generation."""
+
+    enabled: bool = False
+    prompt: str = Field(
+        default="### Instruction:\nSay hello in one short sentence.\n\n### Response:\n",
+        description="Prompt used for a short smoke generation after training",
+    )
+    max_new_tokens: int = 32
 
 
 class QuickTrainerConfig(BaseModel):
@@ -130,6 +180,11 @@ class QuickTrainerConfig(BaseModel):
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     huggingface: HuggingFaceUploadConfig | None = Field(default_factory=HuggingFaceUploadConfig)
     ollama: OllamaConfig | None = Field(default_factory=OllamaConfig)
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
+    trust_remote_code: bool = Field(
+        default=False,
+        description="Allow executing remote code from the Hub model repo (unsafe; opt-in)",
+    )
     hf_token: str | None = Field(
         default=None,
         description="Hugging Face token (prefer HF_TOKEN env var)",
@@ -152,5 +207,9 @@ def load_config(path: Path) -> QuickTrainerConfig:
     return QuickTrainerConfig.model_validate(raw)
 
 
-def config_to_dict(config: QuickTrainerConfig) -> dict:
-    return config.model_dump(mode="json")
+def config_for_display(config: QuickTrainerConfig) -> dict[str, Any]:
+    """Serialize config for logs/CLI with secrets redacted."""
+    data = config.model_dump(mode="json")
+    if data.get("hf_token"):
+        data["hf_token"] = "***REDACTED***"
+    return data
